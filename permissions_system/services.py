@@ -1,25 +1,18 @@
 """
-Сервис для проверки прав доступа пользователей.
-
-Реализует алгоритм проверки с приоритетами:
-1. Суперпользователь - всегда True
-2. Неактивный пользователь - всегда False  
-3. Resource-level DENY - всегда False
-4. Resource-level ALLOW - True
-5. User-level DENY - False
-6. User-level ALLOW - True
-7. Role-level - проверка через роли
-8. Default - False
+Тут живет основная логика проверки прав. 
+Сделал отдельным сервисом, чтобы не раздувать модели и не дублировать код в разных вьюхах.
+Порядок проверки важен (от частного к общему).
 """
-
-from django.core.cache import cache
+import logging
 from .models import UserPermission, ResourcePermission, RolePermission, UserRole
 
+logger = logging.getLogger(__name__)
 
 class PermissionService:
     """Сервис для проверки прав доступа"""
     
-    CACHE_TIMEOUT = 300  # 5 минут кеша
+    # В будущем можно прикрутить Redis, чтобы не ходить в базу так часто
+    CACHE_TIMEOUT = 300 
     
     @staticmethod
     def check_permission(user, resource_type, action, resource_id=None):
@@ -43,27 +36,26 @@ class PermissionService:
         if not user.is_active:
             return False
         
-        permission_code = f"{resource_type}.{action}"
-        
-        # 3-4. Проверка разрешений на уровне конкретного ресурса
+        # Сначала проверяем конкретный ресурс (самый высокий приоритет)
         if resource_id:
             resource_perm = PermissionService._check_resource_permission(
                 user, permission_code, resource_type, resource_id
             )
-            if resource_perm is not None:  # Явно указано разрешение/запрет
+            if resource_perm is not None:
                 return resource_perm
         
-        # 5-6. Проверка прямых разрешений пользователя
+        # Потом смотрим личные права пользователя
         user_perm = PermissionService._check_user_permission(user, permission_code)
-        if user_perm is not None:  # Явно указано разрешение/запрет
+        if user_perm is not None:
             return user_perm
         
-        # 7. Проверка разрешений через роли
-        if PermissionService._check_role_permission(user, permission_code):
-            return True
+        # И в конце проверяем по ролям
+        has_role_perm = PermissionService._check_role_permission(user, permission_code)
         
-        # 8. По умолчанию - запретить доступ
-        return False
+        if not has_role_perm:
+            logger.warning(f"Доступ запрещен для {user.email}: {permission_code}")
+            
+        return has_role_perm
     
     @staticmethod
     def _check_resource_permission(user, permission_code, resource_type, resource_id):

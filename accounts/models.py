@@ -4,7 +4,7 @@ from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
-    """Менеджер для кастомной модели пользователя"""
+    """Кастомный менеджер, чтобы логиниться через email"""
     
     def create_user(self, email, password=None, **extra_fields):
         """Создание обычного пользователя"""
